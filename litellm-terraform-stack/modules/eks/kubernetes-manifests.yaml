@@ -1,0 +1,211 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: litellm-service-account
+  namespace: default
+  annotations:
+    eks.amazonaws.com/role-arn: "${litellm_pod_role_arn}"
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: litellm-api-keys
+type: Opaque
+stringData:
+  DATABASE_URL: "${database_url}"
+  LITELLM_MASTER_KEY: "${litellm_master_key}"
+  LITELLM_SALT_KEY: "${litellm_salt_key}"
+  OPENAI_API_KEY: "${openai_api_key}"
+  AZURE_OPENAI_API_KEY: "${azure_openai_api_key}"
+  AZURE_API_KEY: "${azure_api_key}"
+  ANTHROPIC_API_KEY: "${anthropic_api_key}"
+  GROQ_API_KEY: "${groq_api_key}"
+  COHERE_API_KEY: "${cohere_api_key}"
+  CO_API_KEY: "${co_api_key}"
+  HF_TOKEN: "${hf_token}"
+  HUGGINGFACE_API_KEY: "${huggingface_api_key}"
+  DATABRICKS_API_KEY: "${databricks_api_key}"
+  GEMINI_API_KEY: "${gemini_api_key}"
+  CODESTRAL_API_KEY: "${codestral_api_key}"
+  MISTRAL_API_KEY: "${mistral_api_key}"
+  AZURE_AI_API_KEY: "${azure_ai_api_key}"
+  NVIDIA_NIM_API_KEY: "${nvidia_nim_api_key}"
+  XAI_API_KEY: "${xai_api_key}"
+  PERPLEXITYAI_API_KEY: "${perplexityai_api_key}"
+  GITHUB_API_KEY: "${github_api_key}"
+  DEEPSEEK_API_KEY: "${deepseek_api_key}"
+  AI21_API_KEY: "${ai21_api_key}"
+  LANGSMITH_API_KEY: "${langsmith_api_key}"
+  LANGFUSE_SECRET_KEY: "${langfuse_secret_key}"
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: middleware-secrets
+type: Opaque
+stringData:
+  DATABASE_MIDDLEWARE_URL: "${database_url}"
+  MASTER_KEY: "${litellm_master_key}"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: litellm-deployment
+spec:
+  replicas: ${desired_capacity}
+  selector:
+    matchLabels:
+      app: litellm
+  template:
+    metadata:
+      labels:
+        app: litellm
+    spec:
+      nodeSelector:
+        eks.amazonaws.com/nodegroup: "${nodegroup_name}"
+      serviceAccountName: litellm-service-account
+      containers:
+      - name: litellm-container
+        image: "${ecr_litellm_repository_url}:${litellm_version}"
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 4000
+        env:
+        - name: LITELLM_CONFIG_BUCKET_NAME
+          value: "${config_bucket_name}"
+        - name: LITELLM_CONFIG_BUCKET_OBJECT_KEY
+          value: "config.yaml"
+        - name: UI_USERNAME
+          value: "admin"
+        - name: REDIS_HOST
+          value: "${redis_host}"
+        - name: REDIS_PORT
+          value: "${redis_port}"
+        - name: REDIS_PASSWORD
+          value: "${redis_password}"
+        - name: REDIS_SSL
+          value: "True"
+        - name: LANGSMITH_PROJECT
+          value: "${langsmith_project}"
+        - name: LANGSMITH_DEFAULT_RUN_NAME
+          value: "${langsmith_default_run_name}"
+        - name: AWS_REGION
+          value: "${aws_region}"
+        - name: LITELLM_LOG
+          value: "DEBUG"
+        - name: LITELLM_LOCAL_MODEL_COST_MAP
+          value: "${litellm_local_model_cost_map}"
+        - name: NO_DOCS
+          value: "${no_docs}"
+        - name: DISABLE_ADMIN_UI
+          value: "${disable_admin_ui}"
+        - name: LANGFUSE_PUBLIC_KEY
+          value: "${langfuse_public_key}"
+        - name: LANGFUSE_HOST
+          value: "${langfuse_host}"
+        envFrom:
+        - secretRef:
+            name: litellm-api-keys
+        readinessProbe:
+          httpGet:
+            path: /health/liveliness
+            port: 4000
+          initialDelaySeconds: 20
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /health/liveliness
+            port: 4000
+          initialDelaySeconds: 20
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: "${litellm_cpu_request}"
+            memory: "${litellm_memory_request}"
+          limits:
+            cpu: "${litellm_cpu_limit}"
+            memory: "${litellm_memory_limit}"
+      - name: middleware-container
+        image: "${ecr_middleware_repository_url}:latest"
+        ports:
+        - containerPort: 3000
+        env:
+        - name: OKTA_ISSUER
+          value: "${okta_issuer}"
+        - name: OKTA_AUDIENCE
+          value: "${okta_audience}"
+        - name: AWS_REGION
+          value: "${aws_region}"
+        - name: AWS_DEFAULT_REGION
+          value: "${aws_region}"
+        envFrom:
+        - secretRef:
+            name: middleware-secrets
+        readinessProbe:
+          httpGet:
+            path: /bedrock/health/liveliness
+            port: 3000
+          initialDelaySeconds: 20
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /bedrock/health/liveliness
+            port: 3000
+          initialDelaySeconds: 20
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: "${middleware_cpu_request}"
+            memory: "${middleware_memory_request}"
+          limits:
+            cpu: "${middleware_cpu_limit}"
+            memory: "${middleware_memory_limit}"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: litellm-service
+spec:
+  selector:
+    app: litellm
+  ports:
+  - name: port4000
+    port: 4000
+    targetPort: 4000
+  - name: port3000
+    port: 3000
+    targetPort: 3000
+  type: ClusterIP
+
+%{ if enable_hpa }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: litellm-hpa
+  namespace: default
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: litellm-deployment
+  minReplicas: ${hpa_min_replicas}
+  maxReplicas: ${hpa_max_replicas}
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: ${hpa_cpu_target_percentage}
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: ${hpa_memory_target_percentage}
+%{ endif }

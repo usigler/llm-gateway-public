@@ -1,0 +1,96 @@
+apiVersion: networking.k8s.io/v1
+kind: IngressClass
+metadata:
+  name: alb
+spec:
+  controller: ingress.k8s.aws/alb
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: litellm-ingress
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: "${alb_scheme}"
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/certificate-arn: "${certificate_arn}"
+    alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-2016-08
+    alb.ingress.kubernetes.io/wafv2-acl-arn: "${wafv2_acl_arn}"
+spec:
+  ingressClassName: alb
+  rules:
+  - host: "${record_name}"
+    http:
+      paths:
+      - path: /bedrock/model
+        pathType: Prefix
+        backend:
+          service:
+            name: litellm-service
+            port:
+              name: port3000
+      - path: /v1/chat/completions
+        pathType: Prefix
+        backend:
+          service:
+            name: litellm-service
+            port:
+              name: port3000
+      - path: /chat/completions
+        pathType: Prefix
+        backend:
+          service:
+            name: litellm-service
+            port:
+              name: port3000
+      - path: /chat-history
+        pathType: Prefix
+        backend:
+          service:
+            name: litellm-service
+            port:
+              name: port3000
+      - path: /bedrock/chat-history
+        pathType: Prefix
+        backend:
+          service:
+            name: litellm-service
+            port:
+              name: port3000
+      - path: /bedrock/health/liveliness
+        pathType: Prefix
+        backend:
+          service:
+            name: litellm-service
+            port:
+              name: port3000
+      - path: /session-ids
+        pathType: Prefix
+        backend:
+          service:
+            name: litellm-service
+            port:
+              name: port3000
+      - path: /key/generate
+        pathType: Prefix
+        backend:
+          service:
+            name: litellm-service
+            port:
+              name: port3000
+      - path: /user/new
+        pathType: Prefix
+        backend:
+          service:
+            name: litellm-service
+            port:
+              name: port3000
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: litellm-service
+            port:
+              name: port4000
